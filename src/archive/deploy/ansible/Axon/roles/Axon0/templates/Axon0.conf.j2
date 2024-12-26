@@ -1,0 +1,26 @@
+[DEFAULT] 
+debug = {{Axon_debug}} 
+log_path = {{Axon_log_dir}} 
+database = "/etc/Axon/Axon_db" 
+socket_path = "/tmp/Axon"
+
+[storage] 
+dataset_location = {{Axon_dataset_location}} 
+checkpoint_location = {{Axon_checkpoint_location}}
+tempfile_location = {{Axon_tempfile_location}}
+tempfile_timeout = 10
+
+[processing]
+use_of_free_memory = {{Axon_use_of_free_memory}}
+
+[auth] 
+policies = "/etc/Axon/policies" 
+token_key_path = {{Axon_token_key_path}} 
+token_expire_time = 3600
+
+[http] 
+enable = True 
+ip = {{Axon_listen_address}}
+certificate = {{Axon_ssl_cert_path}} 
+key = {{Axon_ssl_key_path}} 
+port = 11418

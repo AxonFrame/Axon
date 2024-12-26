@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# run clang-format on all c-file of the commit
+for FILE in $(git diff --cached ---only | grep -E '.*\.(c$|cpp$|h$|hpp$)')
+do
+    clang-format-15 -style=file:.clang-format -i $FILE
+    git add $FILE | true
+done
+

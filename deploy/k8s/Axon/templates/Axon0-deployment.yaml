@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  : Axon
+  labels:
+    app: Axon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: Axon
+  template:
+    metadata:
+      labels:
+        app: Axon
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: Axon-node
+                operator: In
+                values:
+                - "true"
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - Axon
+            topologyKey: kubernetes.io/host
+      containers:
+
+      - : Axon
+        image: {{ .Values.docker.registry }}/Axon:{{ .Values.docker.tag }}
+        imagePullPolicy: Always
+        env:
+        - : Axon_ADMIN_USER_ID
+          value: {{ required "user.id is required!" .Values.user.id }}
+        - : Axon_ADMIN_USER_
+          value: {{ required "user. is required!" .Values.user. }}
+        - : Axon_ADMIN_PASSPHRASE
+          value: {{ required "user.passphrase is required!" .Values.user.passphrase }}
+        volumeMounts:
+        - : data-volume
+          mountPath: /etc/Axon/data/
+        - : Axon-config
+          mountPath: /etc/Axon/Axon.conf
+          subPath: Axon.conf
+        - : policies-config
+          mountPath: /etc/Axon/policies
+          subPath: policies
+        - : token-key
+          mountPath: /etc/Axon/token_key
+          subPath: token_key
+        - : Axon-sockets-volume
+          mountPath: /tmp/Axon
+
+      - : tls-termination
+        image: nginx:latest
+        volumeMounts:
+        - : tls-certs
+          mountPath: /etc/nginx/certs
+        - : Axon-nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+
+      volumes:
+        - : Axon-config
+          configMap:
+            : Axon-config
+        - : policies-config
+          configMap:
+            : policies-config
+        - : token-key
+          secret:
+            secret: token-key
+        - : Axon-sockets-volume
+          emptyDir: {}
+        - : data-volume
+          persistentVolumeClaim:
+            claim: Axon-pvc
+        - : tls-certs
+          secret:
+            secret: Axon-selfsigned-secret
+        - : Axon-nginx-config
+          configMap:
+            : Axon-nginx-config

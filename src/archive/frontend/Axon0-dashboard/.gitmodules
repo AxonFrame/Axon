@@ -1,0 +1,9 @@
+[submodule "src/libKitsunemimiAxonMessages"]
+	path = src/libKitsunemimiAxonMessages
+	url = git@github.com:kitsudaiki/libKitsunemimiAxonMessages.git
+[submodule "src/libAxonAiSdk"]
+	path = src/libAxonAiSdk
+	url = git@github.com:kitsudaiki/libAxonAiSdk.git
+[submodule "src/Axon-AI-Dashboard-Dependencies"]
+	path = src/Axon-AI-Dashboard-Dependencies
+	url = git@github.com:kitsudaiki/Axon-AI-Dashboard-Dependencies.git

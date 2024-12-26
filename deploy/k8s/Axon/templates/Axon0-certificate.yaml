@@ -1,0 +1,11 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  : Axon-selfsigned-cert
+spec:
+  secret: Axon-selfsigned-secret
+  issuerRef:
+    : selfsigned-issuer
+  dnss:
+    - {{ .Values.api.domain }}
+

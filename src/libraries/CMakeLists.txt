@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.16)
+
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
+
+add_subdirectory(Axon_common)
+add_subdirectory(Axon_crypto)
+add_subdirectory(Axon_ini)
+add_subdirectory(Axon_args)
+add_subdirectory(Axon_config)
+add_subdirectory(Axon_cpu)
+add_subdirectory(Axon_sqlite)
+add_subdirectory(Axon_database)
+add_subdirectory(Axon_policies)
+add_subdirectory(Axon_cluster_parser)
+add_subdirectory(Axon_hardware)

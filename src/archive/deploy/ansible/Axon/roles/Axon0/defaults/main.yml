@@ -1,0 +1,16 @@
+---
+Axon_debug: true
+
+Axon_docker_tag: "develop"
+Axon_listen_address: "0.0.0.0"
+Axon_log_dir: "/var/log/Axon"
+
+Axon_dataset_location: "/etc/Axon/datasets"
+Axon_checkpoint_location: "/etc/Axon/checkpoints"
+Axon_tempfile_location: "/etc/Axon/tempfiles"
+
+Axon_use_of_free_memory: 0.5
+
+Axon_token_key_path: "/etc/Axon/token_key"
+Axon_ssl_cert_path: "/etc/Axon/cert.pem"
+Axon_ssl_key_path: "/etc/Axon/key.pem"

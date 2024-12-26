@@ -1,0 +1,34 @@
+: Regular badging sequence
+description: Publishes a badge based on the job status
+inputs:
+  category:
+    description: The subfolder where to group the badges
+    required: true
+  badges:
+    description: A json object of label => status for all badges
+    required: true
+  github_token:
+    description: The token to use to publish the changes
+    required: true
+  branch_:
+    description:  of the branch to publish
+    required: true
+runs:
+  using: composite
+  steps:
+    - 
+      : Generate json with badges-information
+      run: |
+        python ./.github/actions/badge/generate_badges.py ${{ inputs.category }} '${{ inputs.badges }}'
+      shell: bash
+    - 
+      : Push json-files to badges-repo
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        personal_token: ${{ inputs.github_token }}
+        external_repository: kitsudaiki/Axon-badges
+        publish_branch: ${{ inputs.branch_ }}
+        publish_dir: ./badges
+        keep_files: true
+        user_: "github-actions[bot]"
+        user_: "github-actions[bot]@users.noreply.github.com"

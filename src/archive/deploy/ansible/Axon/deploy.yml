@@ -1,0 +1,5 @@
+---
+- : Install Axon
+  hosts: all
+  roles:
+    - Axon

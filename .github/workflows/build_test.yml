@@ -1,0 +1,1354 @@
+: build-and-test
+
+on: [push]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  REGISTRY_Axon_IMAGE: kitsudaiki/Axon
+  REGISTRY_DOCS_IMAGE: kitsudaiki/Axon_docs
+  Axon_ADMIN_USER_ID: asdf
+  Axon_ADMIN_USER_: asdf
+  Axon_ADMIN_PASSPHRASE: asdfasdf
+
+jobs:
+
+  clang-format-check:
+    : "Check clang-format"
+    runs-on: ubuntu-latest
+    env:
+      FORCE_COLOR: 1
+    steps:
+      - uses: earthly/actions-setup@43211c7a0eae5344d6d79fb4aaf209c8f8866203
+        with:
+          version: v0.8.0
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      - 
+        : Run check
+        run: earthly --ci +clang-format
+
+
+
+  cpp-check:
+    : "Run cpp-check"
+    runs-on: ubuntu-latest
+    env:
+      FORCE_COLOR: 1
+    steps:
+      - uses: earthly/actions-setup@43211c7a0eae5344d6d79fb4aaf209c8f8866203
+        with:
+          version: v0.8.0
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      - 
+        : Run check
+        run: earthly --ci +cppcheck
+
+
+
+  # ansible-lint:
+  #   : "Lint ansible playbook"
+  #   runs-on: ubuntu-latest
+  #   env:
+  #     FORCE_COLOR: 1
+  #   steps:
+  #     - uses: earthly/actions-setup@43211c7a0eae5344d6d79fb4aaf209c8f8866203
+  #       with:
+  #         version: v0.8.0
+  #     - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+  #     - 
+  #       : Run check
+  #       run: earthly --ci +ansible-lint
+
+
+
+  flake8-check:
+    : "flake8 check"
+    runs-on: ubuntu-latest
+    env:
+      FORCE_COLOR: 1
+    steps:
+      - uses: earthly/actions-setup@43211c7a0eae5344d6d79fb4aaf209c8f8866203
+        with:
+          version: v0.8.0
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      -
+        : Run check
+        run: earthly --ci +flake8
+
+
+
+  check-for-executables:
+    : "Detect binary executables"
+    runs-on: ubuntu-latest
+    steps:
+      - 
+        : checkout code
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      -
+        : Run binary files check script
+        run: |
+          git ls-tree -r HEAD ---only | while read file; do
+            # Check if the file is a binary
+            if [[ $(file -b --mime-encoding "$file") == binary ]] && file -b "$file" | grep -q "executable"; then
+              echo "Binary file found: $file"
+              exit 1
+            fi
+          done
+          exit 0
+
+
+
+  commit-lint:
+    : "Lint commits"
+    runs-on: ubuntu-latest
+    steps:
+      - 
+        : checkout code
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      - 
+        : lint commits
+        uses: wagoid/commitlint-github-action@7f0a61df502599e1f1f50880aaa7ec1e2c0592f2
+
+
+
+  detect-sectets:
+    : "Detect secrets"
+    runs-on: ubuntu-latest
+    env:
+      FORCE_COLOR: 1
+    steps:
+      - uses: earthly/actions-setup@43211c7a0eae5344d6d79fb4aaf209c8f8866203
+        with:
+          version: v0.8.0
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      -
+        : Run check
+        run: earthly --ci +secret-scan
+    
+
+
+  build_python_package:
+    : "Build SDK python-package"
+    needs: [ cpp-check, clang-format-check, flake8-check, check-for-executables, commit-lint, detect-sectets ]
+    runs-on: ubuntu-latest
+    env:
+      FORCE_COLOR: 1
+    steps:
+      - 
+        : Set helm-version as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "PYTHON_PACKAGE_VERSION=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "PYTHON_PACKAGE_VERSION=0.0.0" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      - 
+        : Checkout repository
+        run: |
+          # use manually clone, because with the "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332" action the  of the
+          # branch can not be read by the git commands, which is necessary for the build-script
+          git clone https://github.com/AxonFrame/${GITHUB_REPOSITORY#*/}.git
+          cd ${GITHUB_REPOSITORY#*/}
+          git checkout ${GITHUB_REF#refs/heads/}
+      - 
+        : Install dependencies for SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler wget gzip python3 python3-pip python3-wheel
+      - 
+        : Build python package
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}/src/sdk/python/Axon_sdk/Axon_sdk
+          protoc --python_out=. --proto_path ../../../../libraries/Axon_messages/protobuffers  Axon_messages.proto3
+          cd ..
+          python3 setup.py bdist_wheel --universal
+      - 
+        : Copy files
+        run: |
+          mkdir /tmp/Axon_python_build_result
+          cd ${GITHUB_REPOSITORY#*/}/src/sdk/python/Axon_sdk/dist
+          ls -l
+          cp ./Axon_sdk-$PYTHON_PACKAGE_VERSION-py2.py3-none-any.whl /tmp/Axon_python_build_result/
+      - 
+        : Create artifact
+        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72b
+        with:
+          : Axon_python_build_result
+          path: /tmp/Axon_python_build_result
+          retention-days: 1
+
+
+
+  build_helm_package:
+    : "Build Helm package"
+    needs: [ cpp-check, clang-format-check, flake8-check, check-for-executables, commit-lint, detect-sectets ]
+    runs-on: ubuntu-latest
+    env:
+      FORCE_COLOR: 1
+    steps:
+      - 
+        : Set helm-version as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "HELM_VERSION=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "HELM_VERSION=0.0.0" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      - 
+        : Checkout repository
+        run: |
+          # use manually clone, because with the "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332" action the  of the
+          # branch can not be read by the git commands, which is necessary for the build-script
+          git clone https://github.com/AxonFrame/${GITHUB_REPOSITORY#*/}.git
+          cd ${GITHUB_REPOSITORY#*/}
+          git checkout ${GITHUB_REF#refs/heads/}
+      - 
+        : Build helm chart
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}/deploy/k8s/Axon
+          helm package --version $HELM_VERSION .
+      - 
+        : Copy files
+        run: |
+          mkdir /tmp/Axon_helm_build_result
+          cd ${GITHUB_REPOSITORY#*/}
+          cp ./deploy/k8s/Axon/Axon-$HELM_VERSION.tgz /tmp/Axon_helm_build_result/
+      - 
+        : Create artifact
+        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72b
+        with:
+          : Axon_helm_build_result
+          path: /tmp/Axon_helm_build_result
+          retention-days: 1
+
+
+
+  build_Axon:
+    : "Compile Axon (debug)"
+    needs: [ cpp-check, clang-format-check, flake8-check, check-for-executables, commit-lint, detect-sectets ]
+    runs-on: ubuntu-latest
+    env:
+      FORCE_COLOR: 1
+    steps:
+      - uses: earthly/actions-setup@43211c7a0eae5344d6d79fb4aaf209c8f8866203
+        with:
+          version: v0.8.0
+      - 
+        : Checkout repository
+        run: |
+          # use manually clone, because with the "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332" action the  of the
+          # branch can not be read by the git commands, which is necessary for the build-script
+          git clone https://github.com/AxonFrame/${GITHUB_REPOSITORY#*/}.git
+          cd ${GITHUB_REPOSITORY#*/}
+          git checkout ${GITHUB_REF#refs/heads/}
+          git submodule init
+          git submodule update --recursive
+      - 
+        : Compile code (Debug)
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}
+          earthly --artifact +compile-code-debug/tmp/Axon ./builds/binaries
+      - 
+        : Copy files
+        run: |
+          mkdir /tmp/Axon_debug_build_result
+          cd ${GITHUB_REPOSITORY#*/}
+          cp -r builds/binaries/* /tmp/Axon_debug_build_result/
+      - 
+        : Create artifact
+        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72b
+        with:
+          : Axon_debug_build_result
+          path: /tmp/Axon_debug_build_result
+          retention-days: 1
+
+
+
+  build_Axonctl:
+    : "Compile CLI"
+    needs: [ cpp-check, clang-format-check, flake8-check, check-for-executables, commit-lint, detect-sectets ]
+    runs-on: ubuntu-latest
+    env:
+      FORCE_COLOR: 1
+    steps:
+      - uses: earthly/actions-setup@43211c7a0eae5344d6d79fb4aaf209c8f8866203
+        with:
+          version: v0.8.0
+      - 
+        : Checkout repository
+        run: |
+          # use manually clone, because with the "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332" action the  of the
+          # branch can not be read by the git commands, which is necessary for the build-script
+          git clone https://github.com/AxonFrame/${GITHUB_REPOSITORY#*/}.git
+          cd ${GITHUB_REPOSITORY#*/}
+          git checkout ${GITHUB_REF#refs/heads/}
+          git submodule init
+          git submodule update --recursive
+      - 
+        : Compile code
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}
+          earthly --artifact +compile-cli/tmp/Axonctl ./builds/
+      - 
+        : Copy files
+        run: |
+          mkdir /tmp/Axonctl_build_result
+          cd ${GITHUB_REPOSITORY#*/}
+          cp -r builds/Axonctl /tmp/Axonctl_build_result/
+      - 
+        : Create artifact
+        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72b
+        with:
+          : Axonctl_build_result
+          path: /tmp/Axonctl_build_result
+          retention-days: 1
+
+
+  compiler_test:
+    if: ${{ github.event_ == 'push' && github.ref == 'refs/heads/develop' }}
+    needs: [ cpp-check, clang-format-check, flake8-check, check-for-executables, commit-lint, detect-sectets  ]
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { tag: "ubuntu-2204_clang-13", : "Ubuntu 22.04 Clang 13", cxx: "/usr/bin/clang++-13", cc: "/usr/bin/clang-13", runs-on: "ubuntu-22.04" }
+          - { tag: "ubuntu-2204_clang-14", : "Ubuntu 22.04 Clang 14", cxx: "/usr/bin/clang++-14", cc: "/usr/bin/clang-14", runs-on: "ubuntu-22.04" }
+          - { tag: "ubuntu-2204_clang-15", : "Ubuntu 22.04 Clang 15", cxx: "/usr/bin/clang++-15", cc: "/usr/bin/clang-15", runs-on: "ubuntu-22.04" } 
+          - { tag: "ubuntu-2404_clang-15", : "Ubuntu 24.04 Clang 15", cxx: "/usr/bin/clang++-15", cc: "/usr/bin/clang-15", runs-on: "ubuntu-24.04" } 
+          - { tag: "ubuntu-2404_clang-16", : "Ubuntu 24.04 Clang 16", cxx: "/usr/bin/clang++-16", cc: "/usr/bin/clang-16", runs-on: "ubuntu-24.04" } 
+          - { tag: "ubuntu-2404_clang-17", : "Ubuntu 24.04 Clang 17", cxx: "/usr/bin/clang++-17", cc: "/usr/bin/clang-17", runs-on: "ubuntu-24.04" } 
+          - { tag: "ubuntu-2404_clang-18", : "Ubuntu 24.04 Clang 18", cxx: "/usr/bin/clang++-18", cc: "/usr/bin/clang-18", runs-on: "ubuntu-24.04" } 
+          - { tag: "ubuntu-2204_gcc-10", : "Ubuntu 22.04 G++ 10", cxx: "/usr/bin/g++-10", cc: "/usr/bin/gcc-10", runs-on: "ubuntu-22.04" }
+          - { tag: "ubuntu-2204_gcc-11", : "Ubuntu 22.04 G++ 11", cxx: "/usr/bin/g++-11", cc: "/usr/bin/gcc-11", runs-on: "ubuntu-22.04" }
+          - { tag: "ubuntu-2204_gcc-12", : "Ubuntu 22.04 G++ 12", cxx: "/usr/bin/g++-12", cc: "/usr/bin/gcc-12", runs-on: "ubuntu-22.04" }
+          - { tag: "ubuntu-2404_gcc-12", : "Ubuntu 24.04 G++ 12", cxx: "/usr/bin/g++-12", cc: "/usr/bin/gcc-12", runs-on: "ubuntu-24.04" }
+          - { tag: "ubuntu-2404_gcc-13", : "Ubuntu 24.04 G++ 13", cxx: "/usr/bin/g++-13", cc: "/usr/bin/gcc-13", runs-on: "ubuntu-24.04" }
+          - { tag: "ubuntu-2404_gcc-14", : "Ubuntu 24.04 G++ 14", cxx: "/usr/bin/g++-14", cc: "/usr/bin/gcc-14", runs-on: "ubuntu-24.04" }
+    runs-on: ${{ matrix.compiler.runs-on }}
+    : "${{ matrix.compiler. }}"
+    env:
+      CXX: ${{ matrix.compiler.cxx }}
+      CC: ${{ matrix.compiler.cc }}
+    outputs:
+      ubuntu-2204_clang-13: ${{ steps.status.outputs.ubuntu-2204_clang-13 }}
+      ubuntu-2204_clang-14: ${{ steps.status.outputs.ubuntu-2204_clang-14 }}
+      ubuntu-2204_clang-15: ${{ steps.status.outputs.ubuntu-2204_clang-15 }}
+      ubuntu-2404_clang-15: ${{ steps.status.outputs.ubuntu-2404_clang-15 }}
+      ubuntu-2404_clang-16: ${{ steps.status.outputs.ubuntu-2404_clang-16 }}
+      ubuntu-2404_clang-17: ${{ steps.status.outputs.ubuntu-2404_clang-17 }}
+      ubuntu-2404_clang-18: ${{ steps.status.outputs.ubuntu-2404_clang-18 }}
+      ubuntu-2204_gcc-10: ${{ steps.status.outputs.ubuntu-2204_gcc-10 }}
+      ubuntu-2204_gcc-11: ${{ steps.status.outputs.ubuntu-2204_gcc-11 }}
+      ubuntu-2204_gcc-12: ${{ steps.status.outputs.ubuntu-2204_gcc-12 }}
+      ubuntu-2404_gcc-12: ${{ steps.status.outputs.ubuntu-2404_gcc-12 }}
+      ubuntu-2404_gcc-13: ${{ steps.status.outputs.ubuntu-2404_gcc-13 }}
+      ubuntu-2404_gcc-14: ${{ steps.status.outputs.ubuntu-2404_gcc-14 }}
+    steps:
+      - 
+        : Checkout repository
+        run: |
+          # use manually clone, because with the "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332" action the  of the
+          # branch can not be read by the git commands, which is necessary for the build-script
+          git clone https://github.com/AxonFrame/${GITHUB_REPOSITORY#*/}.git
+          cd ${GITHUB_REPOSITORY#*/}
+          git checkout ${GITHUB_REF#refs/heads/}
+          git submodule init
+          git submodule update --recursive
+      - 
+        : Install basic packages
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y make \
+                           cmake \
+                           bison \
+                           flex \
+                           git \
+                           ssh \
+                           libssl-dev \
+                           libcrypto++-dev \
+                           libboost-dev \
+                           nlohmann-json3-dev \
+                           uuid-dev  \
+                           libsqlite3-dev \
+                           protobuf-compiler
+      - 
+        : Install clang on Ubuntu 22.04
+        if: (matrix.compiler.tag == 'ubuntu-2204_clang-14') || (matrix.compiler.tag == 'ubuntu-2204_clang-15')
+        run: |
+          sudo apt-get install -y clang-15 clang-14 clang-13
+      - 
+        : Install clang on Ubuntu 24.04
+        if: (matrix.compiler.tag == 'ubuntu-2404_clang-15') || (matrix.compiler.tag == 'ubuntu-2404_clang-16') || (matrix.compiler.tag == 'ubuntu-2404_clang-17') || (matrix.compiler.tag == 'ubuntu-2404_clang-18')
+        run: |
+          sudo apt-get install -y clang-15 clang-16 clang-17 clang-18
+      - 
+        : Install gcc on Ubuntu 22.04
+        if: (matrix.compiler.tag == 'ubuntu-2204_gcc-10') || (matrix.compiler.tag == 'ubuntu-2204_gcc-11') || (matrix.compiler.tag == 'ubuntu-2204_gcc-12')
+        run: |
+          sudo apt-get install -y gcc-10 g++-10 gcc-11 g++-11 gcc-12 g++-12
+      - 
+        : Install gcc on Ubuntu 24.04
+        if: (matrix.compiler.tag == 'ubuntu-2404_gcc-12') || (matrix.compiler.tag == 'ubuntu-2404_gcc-13') || (matrix.compiler.tag == 'ubuntu-2404_gcc-14')
+        run: |
+          sudo apt-get install -y gcc-12 g++-12 gcc-13 g++-13 gcc-14 g++-14
+      -
+        : Compile code
+        run: |
+          cd ${GITHUB_REPOSITORY#*/} && \
+          cmake -DCMAKE_BUILD_TYPE=Release -Drun_tests=ON -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }} -DCMAKE_C_COMPILER=${{ matrix.compiler.cc }}  . && \
+          make -j4
+      -
+        : Run basic test
+        run: |
+          cd ${GITHUB_REPOSITORY#*/} 
+          ./src/Axon/Axon_unittests
+      - : Update Result
+        id: status
+        if: ${{ always() }}
+        run: echo "${{ matrix.compiler.tag }}=${{ job.status }}" >> $GITHUB_OUTPUT
+
+
+
+  unit_tests:
+    : "Unit-Tests"
+    needs: [ build_Axon, build_Axonctl, build_helm_package, build_python_package ]
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+    steps:
+      - 
+        : Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y openssl libuuid1 libcrypto++8 libsqlite3-0 libprotobuf23 libboost1.74
+      - 
+        : Get artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axon_debug_build_result
+          path: /tmp/Axon_debug_build_result
+      - 
+        : "Check target-directory"
+        run: ls -l /tmp/Axon_debug_build_result
+      - 
+        : "Run test: Axon_common"
+        run: |
+          chmod +x /tmp/Axon_debug_build_result/Axon_common_unit_tests
+          /tmp/Axon_debug_build_result/Axon_common_unit_tests
+      - 
+        : "Run test: Axon_config"
+        run: |
+          chmod +x /tmp/Axon_debug_build_result/Axon_config_unit_tests
+          /tmp/Axon_debug_build_result/Axon_config_unit_tests
+      - 
+        : "Run test: Axon_crypto"
+        run: |
+          chmod +x /tmp/Axon_debug_build_result/Axon_crypto_unit_tests
+          /tmp/Axon_debug_build_result/Axon_crypto_unit_tests
+      - 
+        : "Run test: Axon_ini"
+        run: |
+          chmod +x /tmp/Axon_debug_build_result/Axon_ini_unit_tests
+          /tmp/Axon_debug_build_result/Axon_ini_unit_tests
+      - 
+        : "Run test: Axon_sqlite"
+        run: |
+          chmod +x /tmp/Axon_debug_build_result/Axon_sqlite_unit_tests
+          /tmp/Axon_debug_build_result/Axon_sqlite_unit_tests
+      - 
+        : "Run test: Axon_cluster_parser"
+        run: |
+          chmod +x /tmp/Axon_debug_build_result/Axon_cluster_parser_unit_tests
+          /tmp/Axon_debug_build_result/Axon_cluster_parser_unit_tests
+      - 
+        : "Run test: Axon_policies"
+        run: |
+          chmod +x /tmp/Axon_debug_build_result/Axon_policies_unit_tests
+          /tmp/Axon_debug_build_result/Axon_policies_unit_tests
+      - 
+        : "Run test: Axon_args"
+        run: |
+          chmod +x  /tmp/Axon_debug_build_result/Axon_args_unit_tests
+          /tmp/Axon_debug_build_result/Axon_args_unit_tests
+      - 
+        : "Run test: Axon"
+        run: |
+          chmod +x  /tmp/Axon_debug_build_result/Axon_unittests
+          /tmp/Axon_debug_build_result/Axon_unittests
+
+
+
+  memory_leak_tests:
+    : "Memory-Leak-Tests"
+    needs: [ build_Axon, build_Axonctl, build_helm_package, build_python_package ]
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+    steps:
+      - 
+        : Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y openssl libuuid1 libcrypto++8 libsqlite3-0 libprotobuf23 libboost1.74
+      - 
+        : Get artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axon_debug_build_result
+          path: /tmp/Axon_debug_build_result
+      - 
+        : "Check target-directory"
+        run: ls -l /tmp/Axon_debug_build_result
+      - 
+        : "Run test: Axon_common"
+        run: |
+          chmod +x /tmp/Axon_debug_build_result/Axon_common_memory_leak_tests
+          /tmp/Axon_debug_build_result/Axon_common_memory_leak_tests
+      - 
+        : "Run test: Axon_cluster_parser"
+        run: |
+          chmod +x /tmp/Axon_debug_build_result/Axon_cluster_parser_memory_leak_tests
+          /tmp/Axon_debug_build_result/Axon_cluster_parser_memory_leak_tests
+      - 
+        : "Run test: Axon"
+        run: |
+          chmod +x  /tmp/Axon_debug_build_result/Axon_memory_leak_tests
+          /tmp/Axon_debug_build_result/Axon_memory_leak_tests
+
+
+
+  functional_tests:
+    : "Functional-Tests"
+    needs: [ build_Axon, build_Axonctl, build_helm_package, build_python_package ]
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+    steps:
+      - 
+        : Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y openssl libuuid1 libcrypto++8 libsqlite3-0 libprotobuf23 libboost1.74
+      - 
+        : Get artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axon_debug_build_result
+          path: /tmp/Axon_debug_build_result
+      - 
+        : "Check target-directory"
+        run: ls -l /tmp/Axon_debug_build_result
+      - 
+        : "Run test: Axon_config"
+        run: |
+          chmod +x /tmp/Axon_debug_build_result/Axon_config_functional_tests
+          /tmp/Axon_debug_build_result/Axon_config_functional_tests
+      # - 
+      #  : "Run test: Axon_obj"
+      #   run: |
+      #     chmod +x /tmp/Axon_debug_build_result/libraries/Axon_obj/tests/functional_tests/functional_tests
+      #     /tmp/Axon_debug_build_result/libraries/Axon_obj/tests/functional_tests/functional_tests
+      - 
+        : "Run test: Axon_database"
+        run: |
+          chmod +x /tmp/Axon_debug_build_result/Axon_database_functional_tests
+          /tmp/Axon_debug_build_result/Axon_database_functional_tests
+      # - 
+      #  : "Run test: Axon_network"
+      #   run: |
+      #     chmod +x /tmp/Axon_debug_build_result/libraries/Axon_network/tests/functional_tests/functional_tests
+      #     /tmp/Axon_debug_build_result/libraries/Axon_network/tests/functional_tests/functional_tests
+
+
+
+  sdk_api_tests:
+    : "SDK-API-Tests"
+    needs: [ unit_tests, memory_leak_tests, functional_tests ]
+    runs-on: ubuntu-22.04
+    steps:
+      - 
+        : Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssl libuuid1 libcrypto++8 libsqlite3-0 libprotobuf23 libboost1.74
+      - 
+        : Set python-version as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "PYTHON_PACKAGE_VERSION=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "PYTHON_PACKAGE_VERSION=0.0.0" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      - 
+        : Checkout repository
+        run: |
+          # use manually clone, because with the "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332" action the  of the
+          # branch can not be read by the git commands, which is necessary for the build-script
+          git clone https://github.com/AxonFrame/${GITHUB_REPOSITORY#*/}.git
+          cd ${GITHUB_REPOSITORY#*/}
+          git checkout ${GITHUB_REF#refs/heads/}
+          git submodule init
+          git submodule update --recursive
+      - 
+        : Get artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axon_python_build_result
+          path: /tmp/Axon_python_build_result
+      - 
+        : Get artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axon_debug_build_result
+          path: /tmp/Axon_debug_build_result
+      - 
+        : Install dependencies for SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler wget gzip python3 python3-pip
+          cd /tmp/Axon_python_build_result
+          ls -l
+          pip3 install -U Axon_sdk-$PYTHON_PACKAGE_VERSION-py2.py3-none-any.whl
+      - 
+        : Download mnist-files
+        run: |
+          cd /tmp/
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/train-images-idx3-ubyte.gz
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/train-labels-idx1-ubyte.gz
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/t10k-images-idx3-ubyte.gz
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/t10k-labels-idx1-ubyte.gz
+          gzip -d train-images-idx3-ubyte.gz
+          gzip -d train-labels-idx1-ubyte.gz
+          gzip -d t10k-images-idx3-ubyte.gz
+          gzip -d t10k-labels-idx1-ubyte.gz
+      - 
+        : run Axon in backgroupd
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}
+          chmod +x /tmp/Axon_debug_build_result/Axon
+          mkdir -p builds/binaries
+          sudo cp -r ./example_configs/Axon /etc/Axon
+          sudo chmod 777 -R /etc/Axon
+          /tmp/Axon_debug_build_result/Axon &
+          # BINARY_PID=$!
+          # trap "kill $BINARY_PID" EXIT
+      - 
+        : Sleep for 15 seconds
+        uses: jakejarvis/wait-action@919fc193e07906705e5b7a50f90ea9e74d20b2b0
+        with:
+          time: '15s'
+      - 
+        : Run test
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}/testing/python_sdk_api
+          mkdir -p test_dir
+          cp sdk_api_test.py test_dir/
+          cp test_values.py test_dir/
+          cd test_dir
+          /usr/bin/python3 sdk_api_test.py
+
+
+
+  cli_api_tests:
+    : "CLI-API-Tests"
+    needs: [ unit_tests, memory_leak_tests, functional_tests ]
+    runs-on: ubuntu-22.04
+    steps:
+      - 
+        : Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssl libuuid1 libcrypto++8 libsqlite3-0 libprotobuf23 libboost1.74
+      - 
+        : Checkout repository
+        run: |
+          # use manually clone, because with the "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332" action the  of the
+          # branch can not be read by the git commands, which is necessary for the build-script
+          git clone https://github.com/AxonFrame/${GITHUB_REPOSITORY#*/}.git
+          cd ${GITHUB_REPOSITORY#*/}
+          git checkout ${GITHUB_REF#refs/heads/}
+          git submodule init
+          git submodule update --recursive
+      - 
+        : Get artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axon_debug_build_result
+          path: /tmp/Axon_debug_build_result
+      -
+        : Get artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axonctl_build_result
+          path: /tmp/Axonctl_build_result
+      - 
+        : Build local docker-image
+        run: |
+          chmod +x /tmp/Axonctl_build_result/Axonctl
+          cp /tmp/Axonctl_build_result/Axonctl ${GITHUB_REPOSITORY#*/}/testing/go_cli_api/
+      - 
+        : Download mnist-files
+        run: |
+          cd /tmp/
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/train-images-idx3-ubyte.gz
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/train-labels-idx1-ubyte.gz
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/t10k-images-idx3-ubyte.gz
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/t10k-labels-idx1-ubyte.gz
+          gzip -d train-images-idx3-ubyte.gz
+          gzip -d train-labels-idx1-ubyte.gz
+          gzip -d t10k-images-idx3-ubyte.gz
+          gzip -d t10k-labels-idx1-ubyte.gz
+      - 
+        : run Axon in backgroupd
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}
+          chmod +x /tmp/Axon_debug_build_result/Axon
+          mkdir -p builds/binaries
+          sudo cp -r ./example_configs/Axon /etc/Axon
+          sudo chmod 777 -R /etc/Axon
+          /tmp/Axon_debug_build_result/Axon &
+          # BINARY_PID=$!
+          # trap "kill $BINARY_PID" EXIT
+      - 
+        : Sleep for 15 seconds
+        uses: jakejarvis/wait-action@919fc193e07906705e5b7a50f90ea9e74d20b2b0
+        with:
+          time: '15s'
+      - 
+        : Run test
+        run: |
+          export PATH=$PATH:/usr/local/go/bin
+          cd ${GITHUB_REPOSITORY#*/}/testing/go_cli_api
+          export Axon_ADDRESS=http://127.0.0.1:11418
+          export Axon_USER=asdf
+          export Axon_PASSPHRASE=asdfasdf
+          export train_inputs=/tmp/train-images-idx3-ubyte
+          export train_labels=/tmp/train-labels-idx1-ubyte
+          export request_inputs=/tmp/t10k-images-idx3-ubyte
+          export request_labels=/tmp/t10k-labels-idx1-ubyte
+          ./cli_test.sh
+
+
+
+  python_version_test:
+    if: ${{ github.event_ == 'push' && github.ref == 'refs/heads/develop' }}
+    needs: [ unit_tests, memory_leak_tests, functional_tests ]
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version:
+          - { tag: "python-3_9", : "Python 3.9", version: "3.9", runs-on: "ubuntu-20.04" } 
+          - { tag: "python-3_10", : "Python 3.10", version: "3.10", runs-on: "ubuntu-22.04" } 
+          - { tag: "python-3_11", : "Python 3.11", version: "3.11", runs-on: "ubuntu-22.04" } 
+          - { tag: "python-3_12", : "Python 3.12", version: "3.12", runs-on: "ubuntu-24.04" } 
+    runs-on: ${{ matrix.python_version.runs-on }}
+    : "${{ matrix.python_version. }}"
+    outputs:
+      python-3_9: ${{ steps.status.outputs.python-3_9 }}
+      python-3_10: ${{ steps.status.outputs.python-3_10 }}
+      python-3_11: ${{ steps.status.outputs.python-3_11 }}
+      python-3_12: ${{ steps.status.outputs.python-3_12 }}
+    steps:
+      - 
+        : Set python-version as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "PYTHON_PACKAGE_VERSION=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "PYTHON_PACKAGE_VERSION=0.0.0" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      - 
+        : Checkout repository
+        run: |
+          # use manually clone, because with the "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332" action the  of the
+          # branch can not be read by the git commands, which is necessary for the build-script
+          git clone https://github.com/AxonFrame/${GITHUB_REPOSITORY#*/}.git
+          cd ${GITHUB_REPOSITORY#*/}
+          git checkout ${GITHUB_REF#refs/heads/}
+          git submodule init
+          git submodule update --recursive
+      - 
+        : Get artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axon_python_build_result
+          path: /tmp/Axon_python_build_result
+      - 
+        : Get artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axon_debug_build_result
+          path: /tmp/Axon_debug_build_result
+      - 
+        : Install python
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f
+        with:
+          python-version: "${{ matrix.python_version.version }}"
+      - 
+        : Install Axon-sdk
+        run: |
+          cd /tmp/Axon_python_build_result
+          ls -l
+          pip install -U Axon_sdk-$PYTHON_PACKAGE_VERSION-py2.py3-none-any.whl
+      -
+        : Print installed python-version
+        run: |
+          python --version
+      -
+        : Print installed pip-packages
+        run: |
+          pip list
+      - 
+        : Build local docker-image
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}
+          chmod +x /tmp/Axon_debug_build_result/Axon
+          mkdir -p builds/binaries
+          cp /tmp/Axon_debug_build_result/Axon ./builds/binaries/
+          # IMPORTANT: use the Dockerfile instead of the Earthfile here, 
+          # because the Dockerfile is also used in the final build-process.
+          # So using the Dockerfile here to ensure, the final build after 
+          # merge doesn't fail.
+          docker build -t kitsudaiki/Axon:test .
+      - 
+        : Download mnist-files
+        run: |
+          cd /tmp/
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/train-images-idx3-ubyte.gz
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/train-labels-idx1-ubyte.gz
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/t10k-images-idx3-ubyte.gz
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/t10k-labels-idx1-ubyte.gz
+          gzip -d train-images-idx3-ubyte.gz
+          gzip -d train-labels-idx1-ubyte.gz
+          gzip -d t10k-images-idx3-ubyte.gz
+          gzip -d t10k-labels-idx1-ubyte.gz
+      - 
+        : Start Axon-docker-container
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}
+          sudo cp -r ./example_configs/Axon /etc/
+          docker run -d -v \
+            ./example_configs/Axon:/etc/Axon \
+            -p 127.0.0.1:11418:11418 \
+            --=Axon \
+            --env Axon_ADMIN_USER_ID=asdf \
+            --env Axon_ADMIN_USER_=asdf \
+            --env Axon_ADMIN_PASSPHRASE=asdfasdf \
+            kitsudaiki/Axon:test
+      - 
+        : Sleep for 15 seconds
+        uses: jakejarvis/wait-action@919fc193e07906705e5b7a50f90ea9e74d20b2b0
+        with:
+          time: '15s'
+      - 
+        : Run test
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}/testing/python_sdk_api
+          mkdir -p test_dir
+          cp sdk_api_test.py test_dir/
+          cp test_values.py test_dir/
+          cd test_dir
+          python sdk_api_test.py
+      - : Update Result
+        id: status
+        if: ${{ always() }}
+        run: echo "${{ matrix.python_version.tag }}=${{ job.status }}" >> $GITHUB_OUTPUT
+    
+
+
+  docker_build:
+    : "Build Docker-images"
+    if: ${{ github.event_ == 'push' && github.ref == 'refs/heads/develop' || github.event_ == 'push' && startsWith(github.ref, 'refs/tags/') }}
+    needs: [ sdk_api_tests, cli_api_tests ]
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - 
+        : Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV          
+      - 
+        uses: earthly/actions-setup@43211c7a0eae5344d6d79fb4aaf209c8f8866203
+        with:
+          version: v0.8.0
+      - 
+        : Checkout repository
+        run: |
+          # use manually clone, because with the "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332" action the  of the
+          # branch can not be read by the git commands, which is necessary for the build-script
+          git clone https://github.com/AxonFrame/${GITHUB_REPOSITORY#*/}.git
+          cd ${GITHUB_REPOSITORY#*/}
+          git checkout ${GITHUB_REF#refs/heads/}
+          git submodule init
+          git submodule update --recursive
+      - 
+        : Docker meta
+        id: meta
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81
+        with:
+          images: ${{ env.REGISTRY_Axon_IMAGE }}
+      - 
+        : Set up QEMU
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf
+      - 
+        : Set up Docker Buildx
+        uses: docker/setup-buildx-action@988b5a0280414f521da01fcc63a27aeeb4b104db
+      - 
+        : Login to Docker Hub
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
+        with:
+          user: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - 
+        : Check location
+        run: |
+          pwd
+          cd Axon
+          ls -l
+      - 
+        : Build and push by digest
+        id: build
+        uses: docker/build-push-action@5176d81f87c23d6fc96624dfdbcd9f3830bbe445
+        with:
+          context: ./Axon
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,=${{ env.REGISTRY_Axon_IMAGE }},push-by-digest=true,-canonical=true,push=true
+      - 
+        : Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"          
+      - 
+        : Upload digest
+        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72b
+        with:
+          : digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+
+
+  docker_merge:
+    : "Merge and push Docker-image"
+    if: ${{ github.event_ == 'push' && github.ref == 'refs/heads/develop' || github.event_ == 'push' && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-22.04
+    needs: [ docker_build ]
+    steps:
+      - 
+        : Set branch  as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "BRANCH_=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "BRANCH_=$(echo ${GITHUB_REF#refs/heads/})" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      - 
+        : Check docker-tag
+        run: echo "Docker-tag=$BRANCH_"
+      - 
+        : Download digests
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+      - 
+        : Set up Docker Buildx
+        uses: docker/setup-buildx-action@988b5a0280414f521da01fcc63a27aeeb4b104db
+      - 
+        : Docker meta
+        id: meta
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81
+        with:
+          images: ${{ env.REGISTRY_Axon_IMAGE }}
+      - 
+        : Login to Docker Hub
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
+        with:
+          user: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - 
+        : Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create -t ${{ env.REGISTRY_Axon_IMAGE }}:${{ env.BRANCH_ }} \
+            $(printf '${{ env.REGISTRY_Axon_IMAGE }}@sha256:%s ' *)          
+      - 
+        : Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ env.REGISTRY_Axon_IMAGE }}:${{ env.BRANCH_ }}
+
+
+
+  kubernetes_test:
+    if: ${{ github.event_ == 'push' && github.ref == 'refs/heads/develop' || github.event_ == 'push' && startsWith(github.ref, 'refs/tags/') }}
+    needs: [ docker_merge ]
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        kubernetes_version:
+          - { tag: "kubernetes-1_26", : "Kubernetes 1.26", version: "1.26.15"}
+          - { tag: "kubernetes-1_27", : "Kubernetes 1.27", version: "1.27.15"}
+          - { tag: "kubernetes-1_28", : "Kubernetes 1.28", version: "1.28.11"}
+          - { tag: "kubernetes-1_29", : "Kubernetes 1.29", version: "1.29.6"}
+          - { tag: "kubernetes-1_30", : "Kubernetes 1.30", version: "1.30.2"}
+    : "${{ matrix.kubernetes_version. }}"
+    outputs:
+      kubernetes-1_26: ${{ steps.status.outputs.kubernetes-1_26 }}
+      kubernetes-1_27: ${{ steps.status.outputs.kubernetes-1_27 }}
+      kubernetes-1_28: ${{ steps.status.outputs.kubernetes-1_28 }}
+      kubernetes-1_29: ${{ steps.status.outputs.kubernetes-1_29 }}
+      kubernetes-1_30: ${{ steps.status.outputs.kubernetes-1_30 }}
+    env:
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+    steps:
+      - 
+        : Set branch  as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "BRANCH_=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "BRANCH_=$(echo ${GITHUB_REF#refs/heads/})" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      - 
+        : Set python-version as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "PYTHON_PACKAGE_VERSION=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "PYTHON_PACKAGE_VERSION=0.0.0" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      - 
+        : Set helm-version as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "HELM_VERSION=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "HELM_VERSION=0.0.0" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      - 
+        : Get artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axon_python_build_result
+          path: /tmp/Axon_python_build_result
+      - 
+        : Install dependencies for SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler wget gzip python3 python3-pip
+          cd /tmp/Axon_python_build_result
+          ls -l
+          pip3 install -U Axon_sdk-$PYTHON_PACKAGE_VERSION-py2.py3-none-any.whl
+      - 
+        : Check docker-tag
+        run: echo "Docker-tag=$BRANCH_"
+      - 
+        : Checkout repository
+        run: |
+          # use manually clone, because with the "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332" action the  of the
+          # branch can not be read by the git commands, which is necessary for the build-script
+          git clone https://github.com/AxonFrame/${GITHUB_REPOSITORY#*/}.git
+          cd ${GITHUB_REPOSITORY#*/}
+          git checkout ${GITHUB_REF#refs/heads/}
+          git submodule init
+          git submodule update --recursive
+      -
+        : Get helm-chart artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axon_helm_build_result
+          path: /tmp/Axon_helm_build_result
+      - 
+        : Install dependencies for SDK
+        run: |
+          sudo snap install helm --classic
+          sudo snap install kubectl --classic
+      -
+        : Install k3s without traefik
+        run: |
+          sudo curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik" INSTALL_K3S_VERSION=v${{ matrix.kubernetes_version.version }}+k3s1  sh -
+      - 
+        : Sleep for 60 seconds
+        uses: jakejarvis/wait-action@919fc193e07906705e5b7a50f90ea9e74d20b2b0
+        with:
+          time: '60s'
+      -
+        : Install nginx ingress controller
+        run: |
+          sudo chmod -R +r /etc/rancher/k3s
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/baremetal/deploy.yaml
+          sleep 15
+          cat <<EOF > ingress-nginx-controller-loadbalancer.yaml
+          ---
+
+          apiVersion: v1
+          kind: Service
+          metadata:
+            : ingress-nginx-controller-loadbalancer
+            space: ingress-nginx
+          spec:
+            selector:
+              app.kubernetes.io/component: controller
+              app.kubernetes.io/instance: ingress-nginx
+              app.kubernetes.io/: ingress-nginx
+            ports:
+              - : http
+                port: 80
+                protocol: TCP
+                targetPort: 80
+              - : https
+                port: 443
+                protocol: TCP
+                targetPort: 443
+            type: LoadBalancer
+          EOF
+          cat ingress-nginx-controller-loadbalancer.yaml
+          kubectl apply -f ingress-nginx-controller-loadbalancer.yaml
+          sleep 15
+      -
+        : Install cert-manager in kubernetes_test
+        run: |
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          kubectl create space cert-manager
+          helm install cert-manager jetstack/cert-manager --space cert-manager --set installCRDs=true
+      -
+        : Label nodes
+        run: |
+          kubectl label nodes --all Axon-node=true
+      -
+        : Install Axon
+        run: |
+          helm install --set docker.tag="${{ env.BRANCH_ }}" --set user.id=asdf --set user.="test user" --set user.passphrase="asdfasdf" --set token.data="this is a test-token" --set api.domain=local-Axon  Axon /tmp/Axon_helm_build_result/Axon-$HELM_VERSION.tgz
+      - 
+        : Sleep for 60 seconds
+        uses: jakejarvis/wait-action@919fc193e07906705e5b7a50f90ea9e74d20b2b0
+        with:
+          time: '60s'
+      -
+        : Update hosts-file
+        run: |
+          ingress_ip=$(kubectl get ingress Axon-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "$ingress_ip  local-Axon" | sudo tee -a /etc/hosts
+          cat /etc/hosts
+      - 
+        : Download mnist-files
+        run: |
+          cd /tmp/
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/train-images-idx3-ubyte.gz
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/train-labels-idx1-ubyte.gz
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/t10k-images-idx3-ubyte.gz
+          wget https://storage.googleapis.com/cvdf-datasets/mnist/t10k-labels-idx1-ubyte.gz
+          gzip -d train-images-idx3-ubyte.gz
+          gzip -d train-labels-idx1-ubyte.gz
+          gzip -d t10k-images-idx3-ubyte.gz
+          gzip -d t10k-labels-idx1-ubyte.gz
+      - 
+        : Prepare test-config
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}
+          sudo cp -r ./example_configs/Axon /etc/
+          sudo sed -i 's/address = http:\/\/127\.0\.0\.1:11418/address = https:\/\/local-Axon/g' /etc/Axon/Axon_testing.conf
+      - 
+        : Run test
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}/testing/python_sdk_api
+          mkdir -p test_dir
+          cp sdk_api_test.py test_dir/
+          cp test_values.py test_dir/
+          cd test_dir
+          /usr/bin/python3 sdk_api_test.py
+      - : Update Result
+        id: status
+        if: ${{ always() }}
+        run: echo "${{ matrix.kubernetes_version.tag }}=${{ job.status }}" >> $GITHUB_OUTPUT
+
+
+
+  badge-upload:
+    if: ${{ github.event_ == 'push' && github.ref == 'refs/heads/develop' && always() }}
+    needs: [ kubernetes_test, python_version_test, compiler_test ]
+    runs-on: ubuntu-22.04
+    : Publish badges
+    steps:
+      - 
+        : Set branch  as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "BRANCH_=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "BRANCH_=$(echo ${GITHUB_REF#refs/heads/})" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      - 
+        : Checkout repository
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      - 
+        : Publish Compiler Badges
+        uses: ./.github/actions/badge
+        with:
+          category: compiler_version
+          badges: ${{ toJson(needs.compiler_test.outputs) }}
+          github_token: ${{ secrets.BADGES_PUSH_TOKEN }}
+          branch_: ${{ env.BRANCH_ }}
+      - 
+        : Publish Python Badges
+        uses: ./.github/actions/badge
+        with:
+          category: python_version
+          badges: ${{ toJson(needs.python_version_test.outputs) }}
+          github_token: ${{ secrets.BADGES_PUSH_TOKEN }}
+          branch_: ${{ env.BRANCH_ }}
+      - 
+        : Publish Kubernetes Badges
+        uses: ./.github/actions/badge
+        with:
+          category: kubernetes_version
+          badges: ${{ toJson(needs.kubernetes_test.outputs) }}
+          github_token: ${{ secrets.BADGES_PUSH_TOKEN }}
+          branch_: ${{ env.BRANCH_ }}
+
+
+
+  build_docs:
+    : Build and push docs
+    needs: [ kubernetes_test ]
+    runs-on: ubuntu-latest
+    if: ${{ github.event_ == 'push' && github.ref == 'refs/heads/develop' || github.event_ == 'push' && startsWith(github.ref, 'refs/tags/') }}
+    env:
+      FORCE_COLOR: 1
+    steps:
+      - 
+        : Set branch  as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "BRANCH_=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "BRANCH_=$(echo ${GITHUB_REF#refs/heads/})" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      - 
+        : Check docker-tag
+        run: echo "Docker-tag=$BRANCH_"
+      - 
+        uses: earthly/actions-setup@43211c7a0eae5344d6d79fb4aaf209c8f8866203
+        with:
+          version: v0.8.0
+      - 
+        : Checkout repository
+        run: |
+          # use manually clone, because with the "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332" action the  of the
+          # branch can not be read by the git commands, which is necessary for the build-script
+          git clone https://github.com/AxonFrame/${GITHUB_REPOSITORY#*/}.git
+          cd ${GITHUB_REPOSITORY#*/}
+          git checkout ${GITHUB_REF#refs/heads/}
+          git submodule init
+          git submodule update --recursive
+      - 
+        : Build docs
+        run: |
+          cd ${GITHUB_REPOSITORY#*/}
+          earthly  +build-docs --image_=${{ env.REGISTRY_DOCS_IMAGE }}:${{ env.BRANCH_ }}
+      - 
+        : Login to Docker Hub
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
+        with:
+          user: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - 
+        : Push image
+        run: docker push ${{ env.REGISTRY_DOCS_IMAGE }}:${{ env.BRANCH_ }}
+
+
+
+  upload_files:
+    : "Upload files to share"
+    needs: [ kubernetes_test ]
+    runs-on: ubuntu-latest
+    env:
+      FORCE_COLOR: 1
+    steps:
+      - 
+        : Set branch  as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "BRANCH_=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "BRANCH_=$(echo ${GITHUB_REF#refs/heads/})" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      - 
+        : Set helm-version as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "HELM_VERSION=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "HELM_VERSION=0.0.0" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      - 
+        : Set python-version as environment variable
+        run: |
+          if [[ ${GITHUB_REF#} == refs/tags/* ]]; then \
+              echo "PYTHON_PACKAGE_VERSION=$(echo ${GITHUB_REF#refs/tags/} | sed 's/^v//')" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          else \
+              echo "PYTHON_PACKAGE_VERSION=0.0.0" | sed 's#/#\-#' >> $GITHUB_ENV; \
+          fi
+      -
+        : Get artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axonctl_build_result
+          path: /tmp/Axonctl_build_result
+      -
+        : Get helm-chart artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axon_helm_build_result
+          path: /tmp/Axon_helm_build_result
+      - 
+        : Get artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          : Axon_python_build_result
+          path: /tmp/Axon_python_build_result
+      - 
+        : Prepare ssh-keys
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SHARE_SSH_PUBLIC_KEY }}" > ~/.ssh/id_rsa.pub
+          echo "${{ secrets.SHARE_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          echo "${{ secrets.SHARE_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_rsa
+      -
+        : Create remote directory, if not exist
+        run: |
+          ssh ${{ secrets.SHARE_SSH_ACCESS }} "mkdir -p ~/Axon_file_share/$BRANCH_"
+          ssh ${{ secrets.SHARE_SSH_ACCESS }} "mkdir -p ~/Axon_file_share/$BRANCH_/helm-chart"
+          ssh ${{ secrets.SHARE_SSH_ACCESS }} "mkdir -p ~/Axon_file_share/$BRANCH_/python-package"
+          ssh ${{ secrets.SHARE_SSH_ACCESS }} "mkdir -p ~/Axon_file_share/$BRANCH_/client"
+      - 
+        : Upload Axonctl
+        run: |
+          cd /tmp/Axonctl_build_result
+          tar -czvf Axonctl_amd64_$BRANCH_.tar.gz Axonctl
+          scp Axonctl_amd64_$BRANCH_.tar.gz ${{ secrets.SHARE_SSH_ACCESS }}:~/Axon_file_share/$BRANCH_/client/
+      - 
+        : Upload helm-chart
+        run: |
+          scp /tmp/Axon_helm_build_result/Axon-$HELM_VERSION.tgz ${{ secrets.SHARE_SSH_ACCESS }}:~/Axon_file_share/$BRANCH_/helm-chart/
+      - 
+        : Upload pip-package
+        run: |
+          scp /tmp/Axon_python_build_result/Axon_sdk-$PYTHON_PACKAGE_VERSION-py2.py3-none-any.whl ${{ secrets.SHARE_SSH_ACCESS }}:~/Axon_file_share/$BRANCH_/python-package/

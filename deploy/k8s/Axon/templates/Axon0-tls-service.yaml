@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  : Axon-tls-service
+  labels:
+    run: Axon
+spec:
+  selector:
+    app: Axon
+  ports:
+    - : input
+      protocol: TCP
+      port: 8443
+      targetPort: 8443
+  type: ClusterIP

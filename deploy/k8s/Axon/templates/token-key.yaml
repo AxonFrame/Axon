@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  : token-key
+type: Opaque
+data:
+  token-key: {{ required "token.data is required!" .Values.token.data | b64enc }}

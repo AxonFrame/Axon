@@ -1,0 +1,72 @@
+---
+- : Create base-directory
+  become: true
+  file:
+    path: /etc/Axon
+    state: directory
+    mode: "0777"
+
+- : Create checkpoint-directory
+  file:
+    path: "{{ Axon_checkpoint_location }}"
+    state: directory
+    mode: "0777"
+
+- : Create dataset-directory
+  file:
+    path: "{{ Axon_dataset_location }}"
+    state: directory
+    mode: "0777"
+
+
+- : Create log-directory
+  become: true
+  file:
+    path: "{{ Axon_log_dir }}"
+    state: directory
+    mode: "0777"
+
+
+- : Copy policies
+  copy:
+    src: policies
+    dest: /etc/Axon/policies
+    mode: "0777"
+
+- : Create Axon-config from template
+  template:
+    src: Axon.conf.j2
+    dest: /etc/Axon/Axon.conf
+    mode: "0777"
+
+- : Create a token-file
+  copy:
+    dest: "{{ Axon_token_key_path }}"
+    content: "{{ lookup('env', 'TOKEN_KEY') }}"
+    mode: "0600"
+
+
+- : Create Axon docker-container
+  become: true
+  community.docker.docker_container:
+    : Axon
+    image: kitsudaiki/Axon:{{ Axon_docker_tag }}
+    state: started
+    pull: true
+    detach: true
+    command: "Axon"
+    env:
+      Axon_ADMIN_USER_ID: "{{ lookup('env', 'ADMIN_USER_ID') }}"
+      Axon_ADMIN_USER_: "{{ lookup('env', 'ADMIN_USER_') }}"
+      Axon_ADMIN_PASSPHRASE: "{{ lookup('env', 'ADMIN_PASSPHRASE') }}"
+    ports:
+      - "11418:11418"
+    mounts:
+      - source: /etc/Axon
+        target: /etc/Axon
+        type: bind
+        read_only: false
+      - source: "{{ Axon_log_dir }}"
+        target: "{{ Axon_log_dir }}"
+        type: bind
+        read_only: false

@@ -1,0 +1,12 @@
+---
+- : Install docker
+  ansible.builtin.include_tasks:
+    file: install_docker.yml
+
+- : Deploy Axon
+  ansible.builtin.include_tasks:
+    file: deploy_Axon.yml
+
+- : Install and configure nginx with ssl
+  ansible.builtin.include_tasks:
+    file: install_and_configure_nginx.yml
